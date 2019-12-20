@@ -5,206 +5,174 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support.ui import Select
 from time import sleep
-from os import remove
+from os import remove, mkdir
 from os.path import exists
 from parse_answer import *
 from answer import *
 
-user = input('username: ')
-passwd = input('password: ')
+current_path = path.dirname(__file__)
+with open(current_path + '/config.json', "r", encoding='utf8') as f:
+    config = json.load(f)
+
+safe_mode = input('想拿多少分？（最高100）：')
+safe_mode = int(safe_mode)
+
+user = config['username']
+passwd = config['password']
 browser = webdriver.Chrome()
-browser.get('http://192.168.9.12/npels/')
+browser.get(config['root'])
 wait = WebDriverWait(browser, 3)
 current = 1  # 题号
-ansll = []
+ansll = []  # 答案列表
+question_quantity = 0  # 这张卷子的问题总数
 
 
 def login(name, password):
-    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '#tbName'))).send_keys(name)
-    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '#tbPwd'))).send_keys(password)
-    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#btnLogin'))).click()
-
-
-def intotest():
     try:
+        sleep(0.5)
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, '#tbName'))).send_keys(name)
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, '#tbPwd'))).send_keys(password)
+        wait.until(EC.element_to_be_clickable(
+            (By.CSS_SELECTOR, '#btnLogin'))).click()
+    except:
+        login(name, password)
+
+
+def intotest(is_first=1):
+    try:
+        sleep(1)
+        browser.switch_to.default_content()
         browser.switch_to.frame('mainFrame')
-
+        print('switched')
+        if is_first:
+            try:
+                wait.until(EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, '#ctl00_cphContent_divWarning > div > div.homework_3 > ul > li.homework_3_2 > span > a'))).click()
+            except TimeoutException:
+                browser.close()
+                print('没有测试!!!')
+                return False
         try:
+            sleep(1)
             wait.until(EC.element_to_be_clickable(
-            (By.CSS_SELECTOR, '#ctl00_cphContent_divWarning > div > div.homework_3 > ul > li.homework_3_2 > span > a'))).click()
+                (By.XPATH, '//table[@class="DataGridTable"]/tbody/tr/td/span/span/input[@value!=" 查 看 "]'))).click()  # 点进入测试的按钮
+            wait3 = WebDriverWait(browser, 1)
+            try:
+                wait3.until(EC.alert_is_present()).accept()  # 可能会出提示框，点掉
+            except:
+                pass
+            return True
         except TimeoutException:
-            browser.close()
-            print('没有测试!!!')
-        sleep(1)
-        try:
-            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-                                               '#ctl00_ContentPlaceHolder1_CourseTestTask1_dgTestTask_ctl03_Action > span > input[type="button"]'))).click()
-        except TimeoutException:
-            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR,
-                                               '#ctl00_ContentPlaceHolder1_CourseTestTask1_dgTestTask_ctl04_Action > span > input[type="button"]'))).click()
+            try:
+                wait.until(EC.element_to_be_clickable(
+                    (By.XPATH, '//*[@id="ctl00_ContentPlaceHolder1_CourseTestTask1_dgTestTask_ctl19_PAGER"]/div/ul/li[14]/a'))).click()  # 下一页按钮
+                return intotest(0)
+            except TimeoutException:
+                print('做完了')
+                browser.close()
+                return False
+
+    except (TimeoutError, TimeoutException):
+        intotest(is_first)
 
 
-        sleep(1)
-    except TimeoutError:
-        return intotest()
+def define_question_content(question):  # 判断问题类型
+    if question.find_element_by_xpath("./following-sibling::*[1]").tag_name == 'input':
+        return 'fill_blank'
+    elif question.find_element_by_xpath("./following-sibling::*[1]").tag_name == 'li':
+        if question.find_element_by_xpath("./../li/input").get_attribute('type') == 'radio':
+            return 'radio'
+        if question.find_element_by_xpath("./../li/input").get_attribute('type') == 'text':
+            return 'translation'
+    elif question.find_element_by_xpath('..').tag_name == 'li':
+        return 'reading'
+    else:
+        return ''
 
 
-def answer_part_one():
+def get_answers():
     global ansll
-    global current
+    global question_quantity
     sleep(2)
     pageSource = browser.page_source
-    with open('source.html', 'w+', encoding='utf-8') as f:
-        f.write(pageSource)
-    prase_result()
-    ansll = callback(0)
+    try:
+        with open(current_path+'/temp/source.html', 'w+', encoding='utf-8') as f:
+            f.write(pageSource)
+    except FileNotFoundError:
+        mkdir(current_path + '/temp')
+        with open(current_path+'/temp/source.html', 'w+', encoding='utf-8') as f:
+            f.write(pageSource)
+
+    prase_result()   # get the answers and save them into EnglishAnswer.html
+    ansll = callback(safe_mode)  # get all of the answers
+    question_quantity = len(ansll)
+
+
+def answer_part_x(part_x=1):
+    global ansll
+    global current
+    global question_quantity
     browser.switch_to.default_content()
-    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '#aPart1'))).click()
+    wait.until(EC.presence_of_element_located(
+        (By.CSS_SELECTOR, '#aPart'+str(part_x)))).click()  # P
     browser.switch_to.frame('mainFrame')
-    anlist = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR,
-                                                             'ul.choiceList > li > input')))
 
-    flag = 1
+    # anlist contains all the questions of current part
+    anlist = wait.until(EC.presence_of_all_elements_located((By.XPATH,
+                                                             '//span[contains(@id,"question_")]')))
+    print(len(anlist))
 
-    for item in anlist:
-        if flag == 0:
-            flag = 1
-        if flag == 1 and 'A' == ansll[current - 1]:
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            item.click()
-            flag = -4
-            current += 1
-        if flag == 2 and 'B' == ansll[current - 1]:
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            item.click()
-            flag = -3
-            current += 1
-        if flag == 3 and 'C' == ansll[current - 1]:
-            item.click()
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            flag = -2
-            current += 1
-        if flag == 4 and 'D' == ansll[current - 1]:
-            item.click()
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            flag = -1
-            current += 1
+    for question in anlist:
+        wait2 = WebDriverWait(question, 3)
+        question_type = define_question_content(question)
+        if question_type == 'radio':
+            wait2.until(EC.element_to_be_clickable(
+                (By.XPATH, '../li/input[@id="'+ansll[current-1]+'"]'))).click()
+            print('第'+str(current)+'题是选择题，填了'+ansll[current-1])
+        if question_type == 'fill_blank':
+            blank = wait2.until(
+                EC.visibility_of_element_located((By.XPATH, './following-sibling::*[1]')))
+            blank.clear()
+            blank.send_keys(ansll[current - 1])
+            print('第'+str(current)+'题是填空题，填了'+ansll[current-1])
+        if question_type == 'reading':
+            wait2.until(EC.element_to_be_clickable(
+                (By.XPATH, '../../li/input[@id="'+ansll[current-1]+'"]'))).click()
+            print('第'+str(current)+'题是选择题，填了'+ansll[current-1])
+        if question_type == 'translation':
+            # blank = question.find_element_by_xpath('../li/input')
+            blank = wait2.until(
+                EC.visibility_of_element_located((By.XPATH, '../li/input')))
+            blank.clear()
+            blank.send_keys(ansll[current - 1])
+            print('第'+str(current)+'题是翻译题，填了'+ansll[current-1])
+        current += 1
 
-        flag += 1
-    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#btnNextPart'))).click()
-
-
-def answer_part_two():
-    global current, ansll
-    anlist = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR,
-                                                             'ul.choiceList > li > input')))
-    flag = 1
-    for item in anlist:
-        if flag == 0:
-            flag = 1
-        if flag == 1 and 'A' == ansll[current - 1]:
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            item.click()
-            flag = -4
-            current += 1
-        if flag == 2 and 'B' == ansll[current - 1]:
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            item.click()
-            flag = -3
-            current += 1
-        if flag == 3 and 'C' == ansll[current - 1]:
-            item.click()
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            flag = -2
-            current += 1
-        if flag == 4 and 'D' == ansll[current - 1]:
-            item.click()
-            print('当前第' + str(current - 1) + '题,选择了' + ansll[current - 1])
-            flag = -1
-            current += 1
-
-        flag += 1
-    try:
-        section_b = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR,
-                                                                '#form1 > div.content_test > div.class_mag.class_main_tab > div.test_frame > div:nth-child(7) > ul.test_list_2 > li > input')))
-    except TimeoutException:
-        print('没有找到Section B的内容')
-
-    else:
-        for item in section_b:
-            item.clear()
-            item.send_keys(ansll[current - 1])
-            current += 1
-
-    try:
-        section_c = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR,
-                                                                '#form1 > div.content_test > div.class_mag.class_main_tab > div.test_frame > div:nth-child(10) > ul > li > span > select')))
-    except TimeoutException:
-        section_c = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.test_frame > div:nth-child(7) > ul > li > span.test_match_2_2 > select')))
-
-    for select in section_c:
-        if ansll[current - 1] == 'A':
-            Select(select).select_by_index(0)
-            current += 1
-        elif ansll[current - 1] == 'B':
-            Select(select).select_by_index(1)
-            current += 1
-        elif ansll[current - 1] == 'C':
-            Select(select).select_by_index(2)
-            current += 1
-        elif ansll[current - 1] == 'D':
-            Select(select).select_by_index(3)
-            current += 1
-        elif ansll[current - 1] == 'E':
-            Select(select).select_by_index(4)
-            current += 1
-        elif ansll[current - 1] == 'F':
-            Select(select).select_by_index(5)
-            current += 1
-        elif ansll[current - 1] == 'G':
-            Select(select).select_by_index(6)
-            current += 1
-        elif ansll[current - 1] == 'H':
-            Select(select).select_by_index(7)
-            current += 1
-        elif ansll[current - 1] == 'I':
-            Select(select).select_by_index(8)
-            current += 1
-        elif ansll[current - 1] == 'J':
-            Select(select).select_by_index(9)
-            current += 1
-        elif ansll[current - 1] == 'K':
-            Select(select).select_by_index(10)
-            current += 1
-        elif ansll[current - 1] == 'L':
-            Select(select).select_by_index(11)
-            current += 1
-        elif ansll[current - 1] == 'M':
-            Select(select).select_by_index(12)
-            current += 1
-        elif ansll[current - 1] == 'N':
-            Select(select).select_by_index(13)
-            current += 1
-        elif ansll[current - 1] == 'O':
-            Select(select).select_by_index(14)
-            current += 1
-        elif ansll[current - 1] == 'P':
-            Select(select).select_by_index(15)
-            current += 1
-        elif ansll[current - 1] == 'Q':
-            Select(select).select_by_index(16)
-            current += 1
-    if exists('EnglishAnswer.html'):
-        remove('EnglishAnswer.html')
-    if exists('source.html'):
-        remove('source.html')
+    # it means when the test is finished, auto submit
+    if current >= question_quantity:
+        browser.switch_to.default_content()
+        wait.until(EC.element_to_be_clickable(
+            (By.XPATH, '//*[@id="divHeader"]/div/div[4]/ul[2]/li[3]/input'))).click()
+        wait.until(EC.alert_is_present()).accept()
 
 
 def main(user, passwd):
+    global current
+    global question_quantity
     login(user, passwd)
-    intotest()
-    answer_part_one()
-    answer_part_two()
+    is_first = True
+    while intotest(is_first):
+        is_first = False
+        get_answers()
+        flag = 1
+        current = 1
+
+        # Auto finist Part 1 ~ Part n
+        while current < question_quantity:
+            answer_part_x(flag)
+            flag += 1
 
 
 if __name__ == '__main__':
