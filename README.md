@@ -35,6 +35,8 @@ Several Modifications have been done...
 
 - 你需要在`config.json`中编辑配置
 
+- 运行`main.py`
+
 - 除此之外你不需要做任何事。
 
 ### 配置说明
